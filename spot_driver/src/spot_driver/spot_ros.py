@@ -39,6 +39,7 @@ from spot_msgs.srv import UploadGraph, UploadGraphResponse
 from spot_msgs.srv import SetLocalizationFiducial, SetLocalizationFiducialResponse
 from spot_msgs.srv import SetLocalizationWaypoint, SetLocalizationWaypointResponse
 from spot_msgs.srv import DownloadGraph, DownloadGraphResponse
+from spot_msgs.srv import Dock, DockResponse
 
 from .ros_helpers import *
 from .spot_wrapper import SpotWrapper
@@ -400,6 +401,16 @@ class SpotROS():
                 self.trajectory_server.publish_feedback(TrajectoryFeedback("Failed to reach goal"))
                 self.trajectory_server.set_aborted(TrajectoryResult(False, "Failed to reach goal"))
 
+    def handle_dock(self, req):
+        """Dock the robot"""
+        resp = self.spot_wrapper.dock(req.dock_id)
+        return DockResponse(resp[0], resp[1])
+
+    def handle_undock(self, req):
+        """Undock the robot"""
+        resp = self.spot_wrapper.undock()
+        return TriggerResponse(resp[0], resp[1])
+
     def cmdVelCallback(self, data):
         """Callback for cmd_vel command"""
         self.spot_wrapper.velocity_cmd(data.linear.x, data.linear.y, data.angular.z)
@@ -647,6 +658,11 @@ class SpotROS():
             rospy.Service("start_recording", Trigger, self.handle_start_recording)
             rospy.Service("stop_recording", Trigger, self.handle_stop_recording)
             rospy.Service("download_graph", DownloadGraph, self.handle_download_graph)
+
+            # Docking
+            rospy.Service("dock", Dock, self.handle_dock)
+            rospy.Service("undock", Trigger, self.handle_undock)
+
 
             self.navigate_as = actionlib.SimpleActionServer('navigate_to', NavigateToAction,
                                                             execute_cb = self.handle_navigate_to,
