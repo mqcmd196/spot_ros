@@ -1055,10 +1055,6 @@ class SpotWrapper():
     def dock(self, dock_id):
         "Dock the robot to dockid"
         try:
-            with LeaseKeepAlive(self._lease_client):
-                # make sure we're powered on and standing
-                self._robot.power_on()
-                robot_command.blocking_stand(self._robot_command_client)
             # Dock the robot
             blocking_dock_robot(self._robot, dock_id)
             return True, "Success"
