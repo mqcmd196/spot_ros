@@ -418,8 +418,8 @@ class SpotWrapper():
         """Get a lease for the robot, a handle on the estop endpoint, and the ID of the robot."""
         try:
             self._robot_id = self._robot.get_id()
-            self.getLease()
             self.resetEStop()
+            self.getLease()
             return True, "Success"
         except (ResponseError, RpcError) as err:
             self._logger.error("Failed to initialize robot communication: %s", err)
