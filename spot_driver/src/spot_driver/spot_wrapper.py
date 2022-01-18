@@ -145,11 +145,11 @@ class AsyncIdle(AsyncPeriodicQuery):
         self._spot_wrapper = spot_wrapper
 
     def _start_query(self):
-        # TODO: fix this method after rebasing
         if self._spot_wrapper._last_stand_command != None:
             try:
-                response = self._client.robot_command_feedback(self._spot_wrapper._last_stand_command)
                 self._spot_wrapper._is_sitting = False
+                response = self._client.robot_command_feedback(self._spot_wrapper._last_stand_command)
+                self._logger.warn('stand response: {}'.format(response))
                 if (response.feedback.synchronized_feedback.mobility_command_feedback.stand_feedback.status ==
                         basic_command_pb2.StandCommand.Feedback.STATUS_IS_STANDING):
                     self._spot_wrapper._is_standing = True
@@ -164,6 +164,7 @@ class AsyncIdle(AsyncPeriodicQuery):
             try:
                 self._spot_wrapper._is_standing = False
                 response = self._client.robot_command_feedback(self._spot_wrapper._last_sit_command)
+                self._logger.warn('sit response: {}'.format(response))
                 if (response.feedback.synchronized_feedback.mobility_command_feedback.sit_feedback.status ==
                         basic_command_pb2.SitCommand.Feedback.STATUS_IS_SITTING):
                     self._spot_wrapper._is_sitting = True
