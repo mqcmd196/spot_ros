@@ -1070,6 +1070,8 @@ class SpotWrapper():
                 self.stand()
                 # Dock the robot
                 self._blocking_dock_robot(dock_id)
+                # Sit after Dock
+                self.sit()
             return True, "Success"
         except Exception as e:
             return False, str(e)
@@ -1079,8 +1081,10 @@ class SpotWrapper():
         "Power motor on and undock the robot from the station"
         try:
             with self._lease_keepalive:
-                # Dock the robot
+                # Undock the robot
                 self._blocking_undock(timeout)
+                # Stand after Undock
+                self.stand()
             return True, "Success"
         except Exception as e:
             return False, str(e)
