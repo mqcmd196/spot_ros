@@ -1165,7 +1165,7 @@ class SpotWrapper():
         raise CommandFailedError("Error going to the prep pose, timeout exceeded.")
 
 
-    def _blocking_undock(robot, timeout=20):
+    def _blocking_undock(self, timeout=20):
         converter = self._robot.time_sync.get_robot_time_converter()
         start_time = converter.robot_seconds_from_local_seconds(now_sec())
         cmd_end_time = start_time + timeout
