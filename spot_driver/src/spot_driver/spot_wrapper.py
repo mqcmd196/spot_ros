@@ -8,6 +8,7 @@ from bosdyn.geometry import EulerZXY
 
 from bosdyn.client.robot_state import RobotStateClient
 from bosdyn.client.robot_command import RobotCommandClient, RobotCommandBuilder
+from bosdyn.client.robot_command import CommandFailedError
 from bosdyn.client.graph_nav import GraphNavClient
 from bosdyn.client.recording import GraphNavRecordingServiceClient
 from bosdyn.client.frame_helpers import get_odom_tform_body
@@ -15,17 +16,23 @@ from bosdyn.client.power import safe_power_off, PowerClient, power_on
 from bosdyn.client.lease import LeaseClient, LeaseKeepAlive
 from bosdyn.client.image import ImageClient, build_image_request
 from bosdyn.client.docking import blocking_dock_robot, blocking_undock
+from bosdyn.client.common import (BaseClient, common_header_errors, common_lease_errors,
+                                  error_factory, handle_common_header_errors,
+                                  handle_lease_use_result_errors, handle_unset_status_error,
+                                  maybe_raise)
 from bosdyn.api import image_pb2
 from bosdyn.api.graph_nav import graph_nav_pb2
 from bosdyn.api.graph_nav import recording_pb2
 from bosdyn.api.graph_nav import map_pb2
 from bosdyn.api.graph_nav import nav_pb2
+from bosdyn.api.docking import docking_pb2
 from bosdyn.client.estop import EstopClient, EstopEndpoint, EstopKeepAlive
 from bosdyn.client import power
 from bosdyn.client import frame_helpers
 from bosdyn.client import math_helpers
 from bosdyn.client import robot_command
 from bosdyn.client.exceptions import InternalServerError
+from bosdyn.util import now_sec, seconds_to_timestamp
 
 from . import graph_nav_util
 
@@ -281,6 +288,7 @@ class SpotWrapper():
                 self._lease_wallet = self._lease_client.lease_wallet
                 self._image_client = self._robot.ensure_client(ImageClient.default_service_name)
                 self._estop_client = self._robot.ensure_client(EstopClient.default_service_name)
+                self._docking_client = self._robot.ensure_client(DockingClient.default_service_name)
             except Exception as e:
                 self._logger.error("Unable to create client service: %s", e)
                 self._valid = False
@@ -1058,10 +1066,10 @@ class SpotWrapper():
         try:
             with self._lease_keepalive:
                 # make sure we're powered on and standing
-                self._robot.power_on()
-                robot_command.blocking_stand(self._robot_command_client)
+                self.power_on()
+                self.stand()
                 # Dock the robot
-                blocking_dock_robot(self._robot, dock_id)
+                self._blocking_dock_robot(dock_id)
             return True, "Success"
         except Exception as e:
             return False, str(e)
@@ -1072,7 +1080,112 @@ class SpotWrapper():
         try:
             with self._lease_keepalive:
                 # Dock the robot
-                blocking_undock(self._robot ,timeout)
+                self._blocking_undock(timeout)
             return True, "Success"
         except Exception as e:
             return False, str(e)
+
+
+    def _dock_robot(self, dock_id, num_retries=4, timeout=30):
+
+        attempt_number = 0
+        docking_success = False
+
+        # Try to dock the robot
+        while attempt_number < num_retries and not docking_success:
+            attempt_number += 1
+            converter = self._robot.time_sync.get_robot_time_converter()
+            start_time = converter.robot_seconds_from_local_seconds(now_sec())
+            cmd_end_time = start_time + timeout
+            cmd_timeout = cmd_end_time + 10  # client side buffer
+
+            prep_pose = (docking_pb2.PREP_POSE_USE_POSE if
+                         (attempt_number % 2) else docking_pb2.PREP_POSE_SKIP_POSE)
+
+            cmd_id = self._docking_client.docking_command(dock_id, robot.time_sync.endpoint.clock_identifier,
+                                                    seconds_to_timestamp(cmd_end_time), prep_pose)
+
+            while converter.robot_seconds_from_local_seconds(now_sec()) < cmd_timeout:
+                feedback = self._docking_client.docking_command_feedback_full(cmd_id)
+                maybe_raise(common_lease_errors(feedback))
+                status = feedback.status
+                if status == docking_pb2.DockingCommandFeedbackResponse.STATUS_IN_PROGRESS:
+                    # keep waiting/trying
+                    time.sleep(1)
+                elif status == docking_pb2.DockingCommandFeedbackResponse.STATUS_DOCKED:
+                    docking_success = True
+                    break
+                elif (status in [
+                        docking_pb2.DockingCommandFeedbackResponse.STATUS_MISALIGNED,
+                        docking_pb2.DockingCommandFeedbackResponse.STATUS_ERROR_COMMAND_TIMED_OUT,
+                ]):
+                    # Retry
+                    break
+                else:
+                    raise CommandFailedError(
+                        "Docking Failed, status: '%s'" %
+                        docking_pb2.DockingCommandFeedbackResponse.Status.Name(status))
+
+        if docking_success:
+            return attempt_number - 1
+
+        # Try and put the robot in a safe position
+        try:
+            self._blocking_go_to_prep_pose(robot, dock_id)
+        except CommandFailedError:
+            pass
+
+        # Raise error on original failure to dock
+        raise CommandFailedError("Docking Failed, too many attempts")
+
+
+    def _blocking_go_to_prep_pose(self, dock_id, timeout=20):
+        converter = self._robot.time_sync.get_robot_time_converter()
+        start_time = converter.robot_seconds_from_local_seconds(now_sec())
+        cmd_end_time = start_time + timeout
+        cmd_timeout = cmd_end_time + 10  # client side buffer
+
+        cmd_id = self._docking_client.docking_command(dock_id, self._robot.time_sync.endpoint.clock_identifier,
+                                                seconds_to_timestamp(cmd_end_time),
+                                                docking_pb2.PREP_POSE_ONLY_POSE)
+
+        while converter.robot_seconds_from_local_seconds(now_sec()) < cmd_timeout:
+            feedback = self._docking_client.docking_command_feedback_full(cmd_id)
+            maybe_raise(common_lease_errors(feedback))
+            status = feedback.status
+            if status == docking_pb2.DockingCommandFeedbackResponse.STATUS_IN_PROGRESS:
+                # keep waiting/trying
+                time.sleep(1)
+            elif status == docking_pb2.DockingCommandFeedbackResponse.STATUS_AT_PREP_POSE:
+                return
+            else:
+                raise CommandFailedError("Failed to go to the prep pose, status: '%s'" %
+                                         docking_pb2.DockingCommandFeedbackResponse.Status.Name(status))
+
+        raise CommandFailedError("Error going to the prep pose, timeout exceeded.")
+
+
+    def _blocking_undock(robot, timeout=20):
+        converter = self._robot.time_sync.get_robot_time_converter()
+        start_time = converter.robot_seconds_from_local_seconds(now_sec())
+        cmd_end_time = start_time + timeout
+        cmd_timeout = cmd_end_time + 10  # client side buffer
+
+        cmd_id = self._docking_client.docking_command(0, self._robot.time_sync.endpoint.clock_identifier,
+                                                seconds_to_timestamp(cmd_end_time),
+                                                docking_pb2.PREP_POSE_UNDOCK)
+
+        while converter.robot_seconds_from_local_seconds(now_sec()) < cmd_timeout:
+            feedback = self._docking_client.docking_command_feedback_full(cmd_id)
+            maybe_raise(common_lease_errors(feedback))
+            status = feedback.status
+            if status == docking_pb2.DockingCommandFeedbackResponse.STATUS_IN_PROGRESS:
+                # keep waiting/trying
+                time.sleep(1)
+            elif status == docking_pb2.DockingCommandFeedbackResponse.STATUS_AT_PREP_POSE:
+                return
+            else:
+                raise CommandFailedError("Failed to undock the robot, status: '%s'" %
+                                         docking_pb2.DockingCommandFeedbackResponse.Status.Name(status))
+
+        raise CommandFailedError("Error undocking the robot, timeout exceeded.")
