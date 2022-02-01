@@ -1102,7 +1102,7 @@ class SpotWrapper():
             prep_pose = (docking_pb2.PREP_POSE_USE_POSE if
                          (attempt_number % 2) else docking_pb2.PREP_POSE_SKIP_POSE)
 
-            cmd_id = self._docking_client.docking_command(dock_id, robot.time_sync.endpoint.clock_identifier,
+            cmd_id = self._docking_client.docking_command(dock_id, self._robot.time_sync.endpoint.clock_identifier,
                                                     seconds_to_timestamp(cmd_end_time), prep_pose)
 
             while converter.robot_seconds_from_local_seconds(now_sec()) < cmd_timeout:
