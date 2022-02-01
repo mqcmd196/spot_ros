@@ -1086,7 +1086,7 @@ class SpotWrapper():
             return False, str(e)
 
 
-    def _dock_robot(self, dock_id, num_retries=4, timeout=30):
+    def _blocking_dock_robot(self, dock_id, num_retries=4, timeout=30):
 
         attempt_number = 0
         docking_success = False
