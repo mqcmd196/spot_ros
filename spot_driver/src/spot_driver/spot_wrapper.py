@@ -15,7 +15,7 @@ from bosdyn.client.frame_helpers import get_odom_tform_body
 from bosdyn.client.power import safe_power_off, PowerClient, power_on
 from bosdyn.client.lease import LeaseClient, LeaseKeepAlive
 from bosdyn.client.image import ImageClient, build_image_request
-from bosdyn.client.docking import blocking_dock_robot, blocking_undock
+from bosdyn.client.docking import DockingClient
 from bosdyn.client.common import (BaseClient, common_header_errors, common_lease_errors,
                                   error_factory, handle_common_header_errors,
                                   handle_lease_use_result_errors, handle_unset_status_error,
